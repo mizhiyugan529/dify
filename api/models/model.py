@@ -761,6 +761,17 @@ class Conversation(Base):
                 return ""
 
     @property
+    def consultation_brief_text(self):
+        if hasattr(self, "consultation_brief") and self.consultation_brief:
+            return self.consultation_brief
+
+        first_message = self.first_message
+        if first_message and getattr(first_message, "consultation_brief", None):
+            return first_message.consultation_brief
+
+        return None
+
+    @property
     def annotated(self):
         return db.session.query(MessageAnnotation).where(MessageAnnotation.conversation_id == self.id).count() > 0
 
@@ -943,6 +954,7 @@ class Message(Base):
         sa.Numeric(10, 7), nullable=False, server_default=sa.text("0.001")
     )
     parent_message_id: Mapped[str | None] = mapped_column(StringUUID, nullable=True)
+    consultation_brief = mapped_column(sa.Text)
     provider_response_latency: Mapped[float] = mapped_column(sa.Float, nullable=False, server_default=sa.text("0"))
     total_price: Mapped[Decimal | None] = mapped_column(sa.Numeric(10, 7))
     currency: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -1527,6 +1539,29 @@ class EndUser(Base, UserMixin):
         self._is_anonymous = value
 
     session_id: Mapped[str] = mapped_column()
+    created_at = mapped_column(sa.DateTime, nullable=False, server_default=func.current_timestamp())
+    updated_at = mapped_column(
+        sa.DateTime, nullable=False, server_default=func.current_timestamp(), onupdate=func.current_timestamp()
+    )
+
+
+class PatientProfile(Base):
+    __tablename__ = "patient_profiles"
+    __table_args__ = (
+        sa.PrimaryKeyConstraint("id", name="patient_profile_pkey"),
+        sa.UniqueConstraint("tenant_id", "app_id", "end_user_id", name="uq_patient_profile_end_user"),
+        sa.Index("patient_profile_app_end_user_idx", "app_id", "end_user_id"),
+    )
+
+    id: Mapped[str] = mapped_column(StringUUID, server_default=sa.text("uuid_generate_v4()"))
+    tenant_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
+    app_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
+    end_user_id: Mapped[str] = mapped_column(sa.String(255), nullable=False)
+    nickname = mapped_column(sa.String(255))
+    emotion = mapped_column(sa.Text)
+    compliance = mapped_column(sa.Text)
+    communication_style = mapped_column(sa.Text)
+    health_behavior = mapped_column(sa.Text)
     created_at = mapped_column(sa.DateTime, nullable=False, server_default=func.current_timestamp())
     updated_at = mapped_column(
         sa.DateTime, nullable=False, server_default=func.current_timestamp(), onupdate=func.current_timestamp()

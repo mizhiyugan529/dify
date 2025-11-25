@@ -1,0 +1,41 @@
+services:
+  api:
+    image: dify-api:local
+    build:
+      args:
+        HTTP_PROXY: http://host.docker.internal:7890
+        HTTPS_PROXY: http://host.docker.internal:7890
+        NO_PROXY: localhost,127.0.0.1,host.docker.internal
+      context: ../api
+      dockerfile: Dockerfile
+    volumes:
+      - ./volumes/app/storage:/app/api/storage
+      - ../api:/app/api
+      - dify_api_venv:/app/api/.venv
+    ports:
+      - "${EXPOSE_API_PORT:-5001}:5001"
+
+  worker:
+    image: dify-api:local
+    volumes:
+      - ./volumes/app/storage:/app/api/storage
+      - ../api:/app/api
+      - dify_api_venv:/app/api/.venv
+
+  worker_beat:
+    image: dify-api:local
+    volumes:
+      - ./volumes/app/storage:/app/api/storage
+      - ../api:/app/api
+      - dify_api_venv:/app/api/.venv
+
+  web:
+    environment:
+      PM2_HOME: /tmp/.pm2
+
+  db:
+    ports:
+      - "${EXPOSE_POSTGRES_PORT:-5432}:5432"
+
+volumes:
+  dify_api_venv:

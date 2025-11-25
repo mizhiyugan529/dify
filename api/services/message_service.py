@@ -88,6 +88,90 @@ class MessageService:
         return InfiniteScrollPagination(data=history_messages, limit=limit, has_more=has_more)
 
     @classmethod
+    def update_consultation_brief(
+        cls,
+        app_model: App,
+        user: Union[Account, EndUser] | None,
+        message_id: str,
+        consultation_brief: str,
+    ) -> None:
+        if not user:
+            raise MessageNotExistsError()
+
+        message = (
+            db.session.query(Message)
+            .where(
+                Message.id == message_id,
+                Message.app_id == app_model.id,
+                Message.from_end_user_id == (user.id if isinstance(user, EndUser) else None),
+                Message.from_account_id == (user.id if isinstance(user, Account) else None),
+            )
+            .first()
+        )
+        if not message:
+            raise MessageNotExistsError()
+
+        message.consultation_brief = consultation_brief
+        db.session.commit()
+
+    @classmethod
+    def search_messages(
+        cls,
+        *,
+        app_model: App,
+        user: Union[Account, EndUser] | None,
+        end_user_id: str | None,
+        page: int,
+        limit: int,
+        conversation_id: str | None,
+        start_time,
+        end_time,
+        keyword: str | None,
+        has_consultation_brief: bool | None,
+    ) -> dict:
+        stmt = db.select(Message).where(Message.app_id == app_model.id)
+
+        # 按 end_user_id 过滤（可选），未提供时不限制用户，保持与 conversation 搜索一致
+        if end_user_id:
+            stmt = stmt.where(Message.from_end_user_id == end_user_id)
+
+        if conversation_id:
+            stmt = stmt.where(Message.conversation_id == conversation_id)
+
+        if start_time:
+            stmt = stmt.where(Message.created_at >= start_time)
+
+        if end_time:
+            stmt = stmt.where(Message.created_at <= end_time)
+
+        if has_consultation_brief is True:
+            stmt = stmt.where(Message.consultation_brief.is_not(None))
+        elif has_consultation_brief is False:
+            stmt = stmt.where(Message.consultation_brief.is_(None))
+
+        if keyword:
+            like_kw = f"%{keyword}%"
+            stmt = stmt.where(
+                db.or_(
+                    Message.query.ilike(like_kw),
+                    Message.answer.ilike(like_kw),
+                    Message.consultation_brief.ilike(like_kw),
+                )
+            )
+
+        page = max(page, 1)
+        limit = max(limit, 1)
+        offset = (page - 1) * limit
+
+        count_stmt = db.select(db.func.count()).select_from(stmt.subquery())
+        total = db.session.scalar(count_stmt) or 0
+
+        rows = db.session.scalars(stmt.order_by(Message.created_at.desc()).offset(offset).limit(limit)).all()
+        has_more = offset + len(rows) < total
+
+        return {"data": rows, "page": page, "limit": limit, "total": total, "has_more": has_more}
+
+    @classmethod
     def pagination_by_last_id(
         cls,
         app_model: App,

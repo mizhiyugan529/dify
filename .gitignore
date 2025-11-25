@@ -242,3 +242,5 @@ scripts/stress-test/reports/
 
 # settings
 *.local.json
+
+docker/volumes/web/pm2

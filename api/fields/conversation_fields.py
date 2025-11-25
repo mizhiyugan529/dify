@@ -78,6 +78,7 @@ message_detail_fields = {
     "from_source": fields.String,
     "from_end_user_id": fields.String,
     "from_account_id": fields.String,
+    "consultation_brief": fields.String,
     "feedbacks": fields.List(fields.Nested(feedback_fields)),
     "workflow_run_id": fields.String,
     "annotation": fields.Nested(annotation_fields, allow_null=True),
@@ -112,6 +113,7 @@ simple_message_detail_fields = {
     "query": fields.String,
     "message": MessageTextField,
     "answer": fields.String,
+    "consultation_brief": fields.String,
 }
 
 conversation_fields = {
@@ -122,6 +124,7 @@ conversation_fields = {
     "from_end_user_session_id": fields.String(),
     "from_account_id": fields.String,
     "from_account_name": fields.String,
+    "consultation_brief": fields.String(attribute="consultation_brief_text"),
     "read_at": TimestampField,
     "created_at": TimestampField,
     "updated_at": TimestampField,
@@ -159,8 +162,10 @@ conversation_with_summary_fields = {
     "from_end_user_session_id": fields.String,
     "from_account_id": fields.String,
     "from_account_name": fields.String,
+    "nickname": fields.String,
     "name": fields.String,
     "summary": fields.String(attribute="summary_or_query"),
+    "consultation_brief": fields.String(attribute="consultation_brief_text"),
     "read_at": TimestampField,
     "created_at": TimestampField,
     "updated_at": TimestampField,
@@ -190,6 +195,7 @@ conversation_detail_fields = {
     "updated_at": TimestampField,
     "annotated": fields.Boolean,
     "introduction": fields.String,
+    "consultation_brief": fields.String(attribute="consultation_brief_text"),
     "model_config": fields.Nested(model_config_fields),
     "message_count": fields.Integer,
     "user_feedback_stats": fields.Nested(feedback_stat_fields),
@@ -202,6 +208,7 @@ simple_conversation_fields = {
     "inputs": FilesContainedField,
     "status": fields.String,
     "introduction": fields.String,
+    "consultation_brief": fields.String(attribute="consultation_brief_text"),
     "created_at": TimestampField,
     "updated_at": TimestampField,
 }
@@ -234,3 +241,18 @@ def build_conversation_delete_model(api_or_ns: Api | Namespace):
 def build_simple_conversation_model(api_or_ns: Api | Namespace):
     """Build the simple conversation model for the API or Namespace."""
     return api_or_ns.model("SimpleConversation", simple_conversation_fields)
+
+
+def build_conversation_search_pagination_model(api_or_ns: Api | Namespace):
+    """Build pagination model for open conversation search."""
+    conversation_model = api_or_ns.model("ConversationWithSummaryForSearch", conversation_with_summary_fields)
+    return api_or_ns.model(
+        "ConversationSearchPagination",
+        {
+            "page": fields.Integer,
+            "limit": fields.Integer,
+            "total": fields.Integer,
+            "has_more": fields.Boolean,
+            "data": fields.List(fields.Nested(conversation_model)),
+        },
+    )

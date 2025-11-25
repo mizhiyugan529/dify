@@ -2,7 +2,7 @@ import json
 import logging
 
 from flask_restx import Api, Namespace, Resource, fields, reqparse
-from flask_restx.inputs import int_range
+from flask_restx.inputs import datetime_from_iso8601, int_range
 from werkzeug.exceptions import BadRequest, InternalServerError, NotFound
 
 import services
@@ -40,6 +40,17 @@ message_list_parser = (
     )
 )
 
+message_brief_parser = (
+    reqparse.RequestParser()
+    .add_argument(
+        "consultation_brief",
+        type=str,
+        required=True,
+        location="json",
+        help="患者咨询简介，写入指定消息记录",
+    )
+)
+
 message_feedback_parser = (
     reqparse.RequestParser()
     .add_argument("rating", type=str, choices=["like", "dislike", None], location="json", help="Feedback rating")
@@ -57,6 +68,24 @@ feedback_list_parser = (
         location="args",
         help="Number of feedbacks per page",
     )
+)
+
+message_search_parser = (
+    reqparse.RequestParser()
+    .add_argument("end_user_id", type=str, location="args", help="End user ID，可选（不限 UUID）")
+    .add_argument("conversation_id", type=uuid_value, location="args", help="Conversation ID，可选")
+    .add_argument("start_time", type=datetime_from_iso8601, location="args", help="起始时间（ISO8601）")
+    .add_argument("end_time", type=datetime_from_iso8601, location="args", help="结束时间（ISO8601）")
+    .add_argument("keyword", type=str, location="args", help="关键词，匹配 query/answer/consultation_brief")
+    .add_argument(
+        "has_consultation_brief",
+        type=lambda v: v.lower() == "true",
+        choices=[None, True, False],
+        location="args",
+        help="是否仅筛选包含简介的消息（true/false）",
+    )
+    .add_argument("page", type=int_range(1, 10000), default=1, location="args", help="页码")
+    .add_argument("limit", type=int_range(1, 200), default=20, location="args", help="每页条数")
 )
 
 
@@ -175,6 +204,38 @@ class MessageFeedbackApi(Resource):
         return {"result": "success"}
 
 
+@service_api_ns.route("/messages/<uuid:message_id>/consultation-brief")
+class MessageConsultationBriefApi(Resource):
+    @service_api_ns.expect(message_brief_parser)
+    @service_api_ns.doc("update_message_consultation_brief")
+    @service_api_ns.doc(description="更新指定消息的咨询简介（患者向医生的提要）")
+    @service_api_ns.doc(params={"message_id": "Message ID"})
+    @service_api_ns.doc(
+        responses={
+            200: "Consultation brief updated successfully",
+            401: "Unauthorized - invalid API token",
+            404: "Message not found",
+        }
+    )
+    @validate_app_token(fetch_user_arg=FetchUserArg(fetch_from=WhereisUserArg.JSON, required=True))
+    def put(self, app_model: App, end_user: EndUser, message_id):
+        """更新消息的咨询简介。"""
+        message_id = str(message_id)
+        args = message_brief_parser.parse_args()
+
+        try:
+            MessageService.update_consultation_brief(
+                app_model=app_model,
+                user=end_user,
+                message_id=message_id,
+                consultation_brief=args["consultation_brief"],
+            )
+        except MessageNotExistsError:
+            raise NotFound("Message Not Exists.")
+
+        return {"result": "success"}
+
+
 @service_api_ns.route("/app/feedbacks")
 class AppGetFeedbacksApi(Resource):
     @service_api_ns.expect(feedback_list_parser)
@@ -195,6 +256,36 @@ class AppGetFeedbacksApi(Resource):
         args = feedback_list_parser.parse_args()
         feedbacks = MessageService.get_all_messages_feedbacks(app_model, page=args["page"], limit=args["limit"])
         return {"data": feedbacks}
+
+
+@service_api_ns.route("/messages/search-advanced")
+class MessageSearchApi(Resource):
+    @service_api_ns.expect(message_search_parser)
+    @service_api_ns.doc("search_messages")
+    @service_api_ns.doc(description="按用户/时间/会话/关键词检索消息，可筛选简介是否为空")
+    @service_api_ns.doc(
+        responses={
+            200: "Messages retrieved successfully",
+            401: "Unauthorized - invalid API token",
+        }
+    )
+    @validate_app_token(fetch_user_arg=FetchUserArg(fetch_from=WhereisUserArg.QUERY))
+    @service_api_ns.marshal_with(build_message_infinite_scroll_pagination_model(service_api_ns))
+    def get(self, app_model: App, end_user: EndUser):
+        args = message_search_parser.parse_args()
+        result = MessageService.search_messages(
+            app_model=app_model,
+            user=end_user,
+            end_user_id=args["end_user_id"],
+            page=args["page"],
+            limit=args["limit"],
+            conversation_id=args["conversation_id"],
+            start_time=args["start_time"],
+            end_time=args["end_time"],
+            keyword=args["keyword"],
+            has_consultation_brief=args["has_consultation_brief"],
+        )
+        return result
 
 
 @service_api_ns.route("/messages/<uuid:message_id>/suggested")

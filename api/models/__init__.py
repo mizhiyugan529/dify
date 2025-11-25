@@ -56,6 +56,7 @@ from .model import (
     MessageFeedback,
     MessageFile,
     OperationLog,
+    PatientProfile,
     RecommendedApp,
     Site,
     Tag,
@@ -63,6 +64,9 @@ from .model import (
     TraceAppConfig,
     UploadFile,
 )
+from .brief import ConversationBrief
+from .daily_stats import DailyAppStat
+from .brief import ConversationBrief
 from .oauth import DatasourceOauthParamConfig, DatasourceProvider
 from .provider import (
     LoadBalancingModelConfig,
@@ -162,6 +166,9 @@ __all__ = [
     "MessageFeedback",
     "MessageFile",
     "OperationLog",
+    "PatientProfile",
+    "ConversationBrief",
+    "DailyAppStat",
     "PinnedConversation",
     "Provider",
     "ProviderModel",

@@ -1,6 +1,6 @@
 from flask_restx import Resource, reqparse
 from flask_restx._http import HTTPStatus
-from flask_restx.inputs import int_range
+from flask_restx.inputs import datetime_from_iso8601, int_range
 from sqlalchemy.orm import Session
 from werkzeug.exceptions import BadRequest, NotFound
 
@@ -13,6 +13,7 @@ from extensions.ext_database import db
 from fields.conversation_fields import (
     build_conversation_delete_model,
     build_conversation_infinite_scroll_pagination_model,
+    build_conversation_search_pagination_model,
     build_simple_conversation_model,
 )
 from fields.conversation_variable_fields import (
@@ -81,6 +82,60 @@ conversation_variable_update_parser = reqparse.RequestParser().add_argument(
     location="json",
     type=lambda x: x,
     help="New value for the conversation variable",
+)
+
+conversation_brief_update_parser = (
+    reqparse.RequestParser()
+    .add_argument(
+        "consultation_brief",
+        type=str,
+        required=True,
+        location="json",
+        help="简要描述患者的咨询内容",
+    )
+)
+
+conversation_search_parser = (
+    reqparse.RequestParser()
+    .add_argument("end_user_id", type=str, location="args", help="患者（终端用户）ID，不限 UUID")
+    .add_argument(
+        "start_time",
+        type=datetime_from_iso8601,
+        location="args",
+        help="起始时间（ISO8601）",
+    )
+    .add_argument(
+        "end_time",
+        type=datetime_from_iso8601,
+        location="args",
+        help="结束时间（ISO8601）",
+    )
+    .add_argument("keyword", type=str, location="args", help="关键词（匹配名称、summary、简介）")
+    .add_argument(
+        "page",
+        type=int_range(1, 10000),
+        required=False,
+        default=1,
+        location="args",
+        help="页码，从 1 开始",
+    )
+    .add_argument(
+        "limit",
+        type=int_range(1, 200),
+        required=False,
+        default=20,
+        location="args",
+        help="每页条数",
+    )
+    .add_argument(
+        "sort_by",
+        type=str,
+        choices=["created_at", "-created_at", "updated_at", "-updated_at"],
+        required=False,
+        default="-updated_at",
+        location="args",
+        help="排序字段",
+    )
 )
 
 
@@ -184,6 +239,34 @@ class ConversationRenameApi(Resource):
             raise NotFound("Conversation Not Exists.")
 
 
+@service_api_ns.route("/conversations/<uuid:c_id>/consultation-brief")
+class ConversationConsultationBriefApi(Resource):
+    @service_api_ns.expect(conversation_brief_update_parser)
+    @service_api_ns.doc("update_conversation_consultation_brief")
+    @service_api_ns.doc(description="更新会话简介，向医生总结患者咨询内容")
+    @service_api_ns.doc(params={"c_id": "Conversation ID"})
+    @service_api_ns.doc(
+        responses={
+            200: "Consultation brief updated",
+            401: "Unauthorized - invalid API token",
+            404: "Conversation not found",
+        }
+    )
+    @validate_app_token(fetch_user_arg=FetchUserArg(fetch_from=WhereisUserArg.JSON))
+    @service_api_ns.marshal_with(build_simple_conversation_model(service_api_ns))
+    def put(self, app_model: App, end_user: EndUser, c_id):
+        args = conversation_brief_update_parser.parse_args()
+        try:
+            return ConversationService.update_consultation_brief(
+                app_model=app_model,
+                conversation_id=str(c_id),
+                user=end_user,
+                consultation_brief=args["consultation_brief"],
+            )
+        except services.errors.conversation.ConversationNotExistsError:
+            raise NotFound("Conversation Not Exists.")
+
+
 @service_api_ns.route("/conversations/<uuid:c_id>/variables")
 class ConversationVariablesApi(Resource):
     @service_api_ns.expect(conversation_variables_parser)
@@ -262,3 +345,46 @@ class ConversationVariableDetailApi(Resource):
             raise NotFound("Conversation Variable Not Exists.")
         except services.errors.conversation.ConversationVariableTypeMismatchError as e:
             raise BadRequest(str(e))
+
+
+@service_api_ns.route("/conversations/search")
+class ConversationSearchApi(Resource):
+    @service_api_ns.expect(conversation_search_parser)
+    @service_api_ns.doc("search_conversations")
+    @service_api_ns.doc(description="按照用户、时间或关键词查询全部会话")
+    @service_api_ns.doc(
+        responses={
+            200: "Conversations retrieved successfully",
+            401: "Unauthorized - invalid API token",
+        }
+    )
+    @validate_app_token(fetch_user_arg=FetchUserArg(fetch_from=WhereisUserArg.QUERY))
+    @service_api_ns.marshal_with(build_conversation_search_pagination_model(service_api_ns))
+    def get(self, app_model: App, end_user: EndUser | None = None):  # noqa: D401
+        """开放检索接口，允许外部前端拉取全部会话。"""
+        args = conversation_search_parser.parse_args()
+        resolved_end_user_id = args["end_user_id"]
+        if args["end_user_id"]:
+            end_user_row = (
+                db.session.query(EndUser)
+                .filter(
+                    EndUser.tenant_id == app_model.tenant_id,
+                    EndUser.app_id == app_model.id,
+                    EndUser.external_user_id == args["end_user_id"],
+                )
+                .first()
+            )
+            if end_user_row:
+                resolved_end_user_id = end_user_row.id
+        with Session(db.engine) as session:
+            return ConversationService.search_conversations(
+                session=session,
+                app_model=app_model,
+                page=args["page"],
+                limit=args["limit"],
+                end_user_id=resolved_end_user_id,
+                start_time=args["start_time"],
+                end_time=args["end_time"],
+                keyword=args["keyword"],
+                sort_by=args["sort_by"],
+            )

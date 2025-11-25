@@ -1,6 +1,7 @@
 import contextlib
 import logging
 from collections.abc import Callable, Sequence
+from datetime import datetime
 from typing import Any, Union
 
 from sqlalchemy import asc, desc, func, or_, select
@@ -177,6 +178,23 @@ class ConversationService:
         return conversation
 
     @classmethod
+    def get_conversation_for_app(cls, app_model: App, conversation_id: str) -> Conversation:
+        conversation = (
+            db.session.query(Conversation)
+            .where(
+                Conversation.id == conversation_id,
+                Conversation.app_id == app_model.id,
+                Conversation.is_deleted == False,
+            )
+            .first()
+        )
+
+        if not conversation:
+            raise ConversationNotExistsError()
+
+        return conversation
+
+    @classmethod
     def delete(cls, app_model: App, conversation_id: str, user: Union[Account, EndUser] | None):
         try:
             logger.info(
@@ -324,3 +342,155 @@ class ConversationService:
                 "updated_at": naive_utc_now(),  # Update timestamp
                 **updated_variable.model_dump(),
             }
+
+    @classmethod
+    def update_consultation_brief(
+        cls,
+        app_model: App,
+        conversation_id: str,
+        user: Union[Account, EndUser] | None,
+        consultation_brief: str,
+    ) -> Conversation:
+        conversation = cls.get_conversation(app_model, conversation_id, user)
+        message = conversation.first_message
+        if message:
+            message.consultation_brief = consultation_brief
+        # 兼容旧数据/无首条消息的情况
+        if hasattr(conversation, "consultation_brief"):
+            conversation.consultation_brief = consultation_brief
+        db.session.commit()
+        return conversation
+
+    @classmethod
+    def update_consultation_brief_for_app(
+        cls,
+        app_model: App,
+        conversation_id: str,
+        consultation_brief: str,
+    ) -> Conversation:
+        conversation = cls.get_conversation_for_app(app_model, conversation_id)
+        message = conversation.first_message
+        if message:
+            message.consultation_brief = consultation_brief
+        if hasattr(conversation, "consultation_brief"):
+            conversation.consultation_brief = consultation_brief
+        db.session.commit()
+        return conversation
+
+    @classmethod
+    def search_conversations(
+        cls,
+        *,
+        session: Session,
+        app_model: App,
+        page: int,
+        limit: int,
+        end_user_id: str | None,
+        start_time: datetime | None,
+        end_time: datetime | None,
+        keyword: str | None,
+        sort_by: str = "-updated_at",
+    ) -> dict[str, Any]:
+        stmt = select(Conversation).where(
+            Conversation.is_deleted == False,
+            Conversation.app_id == app_model.id,
+            Conversation.from_end_user_id.is_not(None),
+        )
+
+        if end_user_id:
+            stmt = stmt.where(Conversation.from_end_user_id == end_user_id)
+
+        if start_time:
+            stmt = stmt.where(Conversation.created_at >= start_time)
+
+        if end_time:
+            stmt = stmt.where(Conversation.created_at <= end_time)
+
+        if keyword:
+            keyword_like = f"%{keyword}%"
+            first_message_brief = (
+                select(Message.consultation_brief)
+                .where(Message.conversation_id == Conversation.id)
+                .order_by(Message.created_at.asc())
+                .limit(1)
+                .scalar_subquery()
+            )
+            stmt = stmt.where(
+                or_(
+                    Conversation.name.ilike(keyword_like),
+                    Conversation.summary.ilike(keyword_like),
+                    first_message_brief.ilike(keyword_like),
+                )
+            )
+
+        page = max(page, 1)
+        limit = max(limit, 1)
+        sort_field, sort_direction = cls._get_sort_params(sort_by)
+
+        count_stmt = select(func.count()).select_from(stmt.subquery())
+        total = session.scalar(count_stmt) or 0
+
+        offset = (page - 1) * limit
+        query_stmt = (
+            stmt.order_by(sort_direction(getattr(Conversation, sort_field))).offset(offset).limit(limit)
+        )
+        rows = session.scalars(query_stmt).all()
+        has_more = offset + len(rows) < total
+
+        # map external_user_id and nickname
+        user_ids = {row.from_end_user_id for row in rows if row.from_end_user_id}
+        ext_map: dict[str, str] = {}
+        nick_map: dict[str, str | None] = {}
+        if user_ids:
+            from models.model import EndUser, PatientProfile  # local import to avoid circular
+
+            end_users = (
+                session.query(EndUser.id, EndUser.external_user_id)
+                .filter(EndUser.id.in_(user_ids))
+                .all()
+            )
+            ext_map = {i: ext for i, ext in end_users}
+
+            if ext_map:
+                nick_rows = (
+                    session.query(PatientProfile.end_user_id, PatientProfile.nickname)
+                    .filter(PatientProfile.end_user_id.in_(ext_map.values()))
+                    .all()
+                )
+                nick_map = {uid: nick for uid, nick in nick_rows}
+
+        data = []
+        for row in rows:
+            external_id = ext_map.get(row.from_end_user_id)
+            data.append(
+                {
+                    "id": row.id,
+                    "status": row.status,
+                    "from_source": row.from_source,
+                    "from_end_user_id": external_id,
+                    "from_end_user_session_id": row.from_end_user_session_id,
+                    "from_account_id": row.from_account_id,
+                    "from_account_name": row.from_account_name,
+                    "name": row.name,
+                    "summary": row.summary_or_query,
+                    "consultation_brief": row.consultation_brief_text,
+                    "read_at": row.read_at,
+                    "created_at": row.created_at,
+                    "updated_at": row.updated_at,
+                    "annotated": row.annotated,
+                    "model_config": row.model_config,
+                    "message_count": row.message_count,
+                    "user_feedback_stats": row.user_feedback_stats,
+                    "admin_feedback_stats": row.admin_feedback_stats,
+                    "status_count": row.status_count,
+                    "nickname": nick_map.get(external_id),
+                }
+            )
+
+        return {
+            "data": data,
+            "page": page,
+            "limit": limit,
+            "total": total,
+            "has_more": has_more,
+        }
