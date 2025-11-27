@@ -20,6 +20,7 @@ class DailyAppStat(Base):
     conversation_count = mapped_column(sa.Integer, nullable=False, server_default=sa.text("0"))
     new_profile_count = mapped_column(sa.Integer, nullable=False, server_default=sa.text("0"))
     brief_summary = mapped_column(sa.JSON, nullable=False, server_default="{}")
+    emotion_distribution = mapped_column(sa.JSON, nullable=False, server_default="{}")
     created_at = mapped_column(sa.DateTime, nullable=False, server_default=sa.text("CURRENT_TIMESTAMP"))
     updated_at = mapped_column(
         sa.DateTime, nullable=False, server_default=sa.text("CURRENT_TIMESTAMP"), onupdate=sa.text("CURRENT_TIMESTAMP")

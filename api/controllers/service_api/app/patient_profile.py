@@ -42,10 +42,11 @@ search_parser = (
     .add_argument("user_ids", type=str, location="args", help="逗号分隔的用户ID列表")
     .add_argument("user_id", type=str, location="args", help="单个用户ID精确匹配")
     .add_argument("nickname", type=str, location="args", help="昵称模糊匹配")
-    .add_argument("emotion", type=str, location="args", help="情绪精确匹配")
+    .add_argument("emotion", type=str, location="args", help="情绪精确匹配，可多选逗号分隔")
     .add_argument("compliance", type=str, location="args", help="配合度精确匹配")
     .add_argument("communication_style", type=str, location="args", help="交流风格精确匹配")
     .add_argument("health_behavior", type=str, location="args", help="健康管理倾向精确匹配")
+    .add_argument("month", type=str, location="args", help="按创建年月筛选，格式 YYYYMM，如 202511")
     .add_argument("page", type=int, default=1, location="args")
     .add_argument("limit", type=int, default=20, location="args")
     .add_argument(
@@ -74,6 +75,7 @@ class PatientProfileSearchApi(Resource):
             compliance=args["compliance"],
             communication_style=args["communication_style"],
             health_behavior=args["health_behavior"],
+            month=args["month"],
             page=args["page"],
             limit=args["limit"],
             sort_by=args["sort_by"],
