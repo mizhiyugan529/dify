@@ -33,7 +33,7 @@ services:
     environment:
       PM2_HOME: /tmp/.pm2
 
-  db:
+  db_postgres:
     ports:
       - "${EXPOSE_POSTGRES_PORT:-5432}:5432"
 
