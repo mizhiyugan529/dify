@@ -112,6 +112,7 @@ def make_request(method, url, max_retries=SSRF_DEFAULT_MAX_RETRIES, **kwargs):
     headers = kwargs.get("headers", {})
     user_provided_host = _get_user_provided_host_header(headers)
 
+    follow_redirects = kwargs.pop("follow_redirects", None)
     retries = 0
     while retries <= max_retries:
         try:
@@ -124,7 +125,10 @@ def make_request(method, url, max_retries=SSRF_DEFAULT_MAX_RETRIES, **kwargs):
             if user_provided_host is not None:
                 request.headers["Host"] = user_provided_host
 
-            response = client.send(request)
+            if follow_redirects is None:
+                response = client.send(request)
+            else:
+                response = client.send(request, follow_redirects=follow_redirects)
 
             # Check for SSRF protection by Squid proxy
             if response.status_code in (401, 403):
